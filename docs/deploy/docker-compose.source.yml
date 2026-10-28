@@ -1,0 +1,17 @@
+x-source-app-image: &source-app-image ${RAKAZO_SOURCE_IMAGE:-rakazo-server/app:local}
+
+services:
+  supervisor:
+    image: *source-app-image
+    environment:
+      RAKAZO_COMPUTER_IMAGE: ${RAKAZO_SOURCE_COMPUTER_IMAGE:-rakazo-server/computer:local}
+  migrate:
+    image: *source-app-image
+  api:
+    image: *source-app-image
+  worker:
+    image: *source-app-image
+  web:
+    image: *source-app-image
+  computer:
+    image: ${RAKAZO_SOURCE_COMPUTER_IMAGE:-rakazo-server/computer:local}
