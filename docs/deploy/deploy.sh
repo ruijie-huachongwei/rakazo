@@ -27,6 +27,8 @@ usage() {
   printf '%s\n' \
     'Usage: bash docs/deploy/deploy.sh COMMAND' \
     '  init --host PRIVATE_IPV4 [--port 5173]  Create local configuration once' \
+    '       [--origin HTTPS_ORIGIN]           Use a public HTTPS origin behind a proxy' \
+    '       [--from-template]                 Replace only an untouched copied template' \
     '  check                                 Check Docker and Compose configuration' \
     '  build                                 Build application and computer from source' \
     '  up                                    Build source and start/update services' \
@@ -95,19 +97,44 @@ build_source() {
   temporary=""
 }
 
+template_matches() {
+  cmp -s \
+    <(sed 's/\r$//; /^[[:space:]]*#/d; /^[[:space:]]*$/d' "$ENV_FILE") \
+    <(sed 's/\r$//; /^[[:space:]]*#/d; /^[[:space:]]*$/d' "$DEPLOY_DIR/.env.example") || return 1
+  local secret_name
+  for secret_name in POSTGRES_PASSWORD POSTGRES_APP_PASSWORD BETTER_AUTH_SECRET ENCRYPTION_KEY SCREEN_PROXY_SECRET SANDBOX_SUPERVISOR_TOKEN; do
+    grep -qx "${secret_name}=" <(sed 's/\r$//' "$ENV_FILE") || return 1
+    if grep -Eq "^${secret_name}=.+" <(sed 's/\r$//' "$ENV_FILE"); then
+      return 1
+    fi
+  done
+}
+
 init() {
-  local host="" port=5173
+  local host="" port=5173 origin=""
+  local from_template=false replace_template=false
   while (($#)); do
     case "$1" in
-      --host|--port)
+      --host|--port|--origin)
         (($# >= 2)) || fail "Missing value for $1."
-        if [[ "$1" == --host ]]; then host="$2"; else port="$2"; fi
+        case "$1" in
+          --host) host="$2" ;;
+          --port) port="$2" ;;
+          --origin) origin="$2" ;;
+        esac
         shift 2
         ;;
+      --from-template) from_template=true; shift ;;
       *) fail "Unknown init option: $1" ;;
     esac
   done
-  [[ ! -e "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fail 'Existing .env left unchanged. Edit it manually; do not regenerate secrets.'
+  [[ -f "$DEPLOY_DIR/.env.example" ]] || fail 'Missing .env.example.'
+  if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
+    [[ "$from_template" == true ]] || fail 'Existing .env left unchanged. Use --from-template only for an untouched copied template on a new installation.'
+    [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fail 'Existing .env must be a regular file, not a symlink.'
+    template_matches || fail 'Existing .env differs from an empty template; no values were changed. Keep existing credentials and edit manually.'
+    replace_template=true
+  fi
   [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail '--host must be a private or loopback IPv4 address.'
   local first second third fourth octet
   IFS=. read -r first second third fourth <<<"$host"
@@ -120,16 +147,38 @@ init() {
   fi
   [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || fail 'Port must be an integer from 1 to 65535.'
   ((port <= 65535)) || fail 'Port must be an integer from 1 to 65535.'
+  local public_host="$host" public_port="" label
+  if [[ -n "$origin" ]]; then
+    [[ "$origin" =~ ^https://([^/:?#@[:space:]]+)(:([1-9][0-9]{0,4}))?/?$ ]] || fail '--origin must be an HTTPS origin without credentials, path, query or fragment.'
+    public_host="${BASH_REMATCH[1],,}"
+    public_port="${BASH_REMATCH[3]:-}"
+    ((${#public_host} <= 253)) || fail 'HTTPS hostname is too long.'
+    [[ "$public_host" != .* && "$public_host" != *. && "$public_host" != *..* ]] || fail 'Invalid HTTPS hostname.'
+    local labels
+    IFS=. read -r -a labels <<<"$public_host"
+    for label in "${labels[@]}"; do
+      [[ "$label" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || fail 'Invalid HTTPS hostname.'
+    done
+    if [[ -n "$public_port" ]]; then
+      ((public_port <= 65535)) || fail 'Invalid HTTPS port.'
+    fi
+    origin="https://$public_host"
+    if [[ -n "$public_port" && "$public_port" != 443 ]]; then
+      origin+=":$public_port"
+    fi
+  else
+    origin="http://${host}:${port}"
+  fi
   command -v openssl >/dev/null 2>&1 || fail 'OpenSSL is required to generate independent secrets.'
-  [[ -f "$DEPLOY_DIR/.env.example" ]] || fail 'Missing .env.example.'
 
-  local line key origin="http://${host}:${port}"
+  local line key
   temporary="$(mktemp "$DEPLOY_DIR/.env.tmp.XXXXXX")"
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     key="${line%%=*}"
     case "$key" in
-      RAKAZO_HOST|RAKAZO_BIND_ADDRESS) printf '%s=%s\n' "$key" "$host" ;;
+      RAKAZO_HOST) printf '%s=%s\n' "$key" "$public_host" ;;
+      RAKAZO_BIND_ADDRESS) printf '%s=%s\n' "$key" "$host" ;;
       RAKAZO_WEB_PORT) printf '%s=%s\n' "$key" "$port" ;;
       BETTER_AUTH_URL|WEB_ORIGIN|API_URL) printf '%s=%s\n' "$key" "$origin" ;;
       POSTGRES_PASSWORD|POSTGRES_APP_PASSWORD) printf '%s=%s\n' "$key" "$(openssl rand -hex 16)" ;;
@@ -140,8 +189,17 @@ init() {
     esac
   done <"$DEPLOY_DIR/.env.example" >"$temporary"
   chmod 600 "$temporary"
-  ln "$temporary" "$ENV_FILE"
-  rm -f -- "$temporary"
+  if [[ "$replace_template" == true ]]; then
+    local original_template
+    original_template="$(mktemp "$DEPLOY_DIR/.env.before-init.XXXXXX")"
+    install -m 600 "$ENV_FILE" "$original_template"
+    template_matches || fail 'Existing .env changed during initialization; no replacement was made.'
+    mv -- "$temporary" "$ENV_FILE"
+    printf '%s\n' 'Saved the original template as docs/deploy/.env.before-init.*.'
+  else
+    ln "$temporary" "$ENV_FILE"
+    rm -f -- "$temporary"
+  fi
   temporary=""
   printf '%s\n' 'Created docs/deploy/.env with independent secrets. Back it up privately before starting.'
 }

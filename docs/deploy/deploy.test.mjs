@@ -136,6 +136,29 @@ test("Bash syntax is valid", () => {
   assert.ok(result.status === 0, "Bash syntax validation failed");
 });
 
+test("Nginx example forwards HTTPS, streaming and WebSocket traffic to loopback", () => {
+  const configuration = readFileSync(path.join(deployDirectory, "nginx.conf.example"), "utf8");
+  for (const directive of [
+    "listen 443 ssl;",
+    "ssl_certificate /etc/nginx/tls/fullchain.pem;",
+    "ssl_certificate_key /etc/nginx/tls/privkey.pem;",
+    "proxy_pass http://127.0.0.1:5173;",
+    "proxy_http_version 1.1;",
+    "proxy_set_header Host $host;",
+    "proxy_set_header X-Forwarded-Proto $scheme;",
+    "proxy_set_header Upgrade $http_upgrade;",
+    "proxy_set_header Connection $rakazo_connection_upgrade;",
+    "proxy_buffering off;",
+    "proxy_request_buffering off;",
+    "proxy_cache off;",
+  ]) {
+    assert.ok(configuration.includes(directive), `Nginx must include ${directive}`);
+  }
+  assert.ok(configuration.includes("map $http_upgrade $rakazo_connection_upgrade {"));
+  assert.ok(configuration.includes("'' close;"));
+  assert.ok(configuration.includes("return 308 https://app.example.com$request_uri;"));
+});
+
 test("init creates matching origins and independent secrets without logging them", (context) => {
   const deployment = fixture(context);
   const result = deployment.run("init", "--host", "127.0.0.1", "--port", "55173");
@@ -177,6 +200,95 @@ test("init refuses to overwrite an existing environment", (context) => {
   const before = readFileSync(filename);
   assert.ok(deployment.run("init", "--host", "127.0.0.1").status !== 0);
   assert.ok(before.equals(readFileSync(filename)), "existing secrets must remain unchanged");
+});
+
+test("HTTPS init separates public origin from the backend bind address", (context) => {
+  const deployment = fixture(context);
+  const result = deployment.run(
+    "init",
+    "--host",
+    "127.0.0.1",
+    "--origin",
+    "https://App.Example.com:443/",
+  );
+  assert.ok(result.status === 0, "HTTPS initialization must succeed");
+  const values = parseEnv(readFileSync(path.join(deployment.directory, ".env"), "utf8"));
+  assert.ok(values.RAKAZO_HOST === "app.example.com");
+  assert.ok(values.RAKAZO_BIND_ADDRESS === "127.0.0.1");
+  assert.ok(values.RAKAZO_WEB_PORT === "5173");
+  for (const name of ["BETTER_AUTH_URL", "WEB_ORIGIN", "API_URL"]) {
+    assert.ok(values[name] === "https://app.example.com", "public HTTPS origins must match");
+  }
+});
+
+test("init from-template generates credentials and preserves the original template", (context) => {
+  const deployment = fixture(context);
+  const filename = path.join(deployment.directory, ".env");
+  const template = readFileSync(path.join(deployment.directory, ".env.example"), "utf8");
+  writeFileSync(filename, template.replace(/\r?\n/g, "\r\n"));
+  const original = readFileSync(filename);
+  const result = deployment.run(
+    "init",
+    "--from-template",
+    "--host",
+    "127.0.0.1",
+    "--origin",
+    "https://app.example.com",
+  );
+  assert.ok(result.status === 0, "an untouched copied template must initialize successfully");
+  const values = parseEnv(readFileSync(filename, "utf8"));
+  for (const name of secretNames) {
+    const length = name.startsWith("POSTGRES_") ? 32 : 64;
+    assert.ok(
+      new RegExp(`^[a-f0-9]{${length}}$`).test(values[name]),
+      "copied template secrets must be generated",
+    );
+    assert.ok(
+      !`${result.stdout}${result.stderr}`.includes(values[name]),
+      "generated secrets must not reach logs",
+    );
+  }
+  const backups = readdirSync(deployment.directory).filter((name) =>
+    name.startsWith(".env.before-init."),
+  );
+  assert.ok(backups.length === 1, "the original template must have exactly one backup");
+  const backup = path.join(deployment.directory, backups[0]);
+  assert.ok(original.equals(readFileSync(backup)), "the backup must preserve the original bytes");
+  if (process.platform !== "win32") assert.ok((statSync(backup).mode & 0o777) === 0o600);
+  assert.ok(deployment.calls() === "", "template initialization must not contact Docker");
+});
+
+test("init from-template never replaces credentials or customized configuration", (context) => {
+  const deployment = fixture(context);
+  assert.ok(deployment.run("init", "--host", "127.0.0.1").status === 0);
+  const filename = path.join(deployment.directory, ".env");
+  const original = readFileSync(filename);
+  assert.ok(deployment.run("init", "--from-template", "--host", "127.0.0.1").status !== 0);
+  assert.ok(original.equals(readFileSync(filename)), "existing credentials must remain unchanged");
+  const template = readFileSync(path.join(deployment.directory, ".env.example"), "utf8");
+  writeFileSync(filename, `${template}\nOPENROUTER_API_KEY=fake-test-key\n`);
+  const customized = readFileSync(filename);
+  assert.ok(deployment.run("init", "--from-template", "--host", "127.0.0.1").status !== 0);
+  assert.ok(customized.equals(readFileSync(filename)), "customized values must remain unchanged");
+});
+
+test("HTTPS init rejects non-origin URLs and invalid hostnames", (context) => {
+  const deployment = fixture(context);
+  for (const origin of [
+    "http://app.example.com",
+    "https://user:fake-pass@app.example.com",
+    "https://app.example.com/path",
+    "https://app.example.com?key=fake",
+    "https://app.example.com:65536",
+    "https://app..example.com",
+    "https://-app.example.com",
+  ]) {
+    assert.ok(
+      deployment.run("init", "--host", "127.0.0.1", "--origin", origin).status !== 0,
+      "invalid origins must fail",
+    );
+    assert.ok(!existsSync(path.join(deployment.directory, ".env")));
+  }
 });
 
 test("init rejects public HTTP hosts, invalid addresses and invalid ports", (context) => {
