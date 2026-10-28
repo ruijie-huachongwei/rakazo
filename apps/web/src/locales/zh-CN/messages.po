@@ -2151,7 +2151,7 @@ msgstr "创建工作区"
 
 #: src/pages/Auth.tsx
 msgid "Create your Rakazo"
-msgstr "创建你的 Rakazo"
+msgstr "创建你的 <0>{brandName}</0>"
 
 #: src/components/AskCard.tsx
 msgid "Created"
@@ -5061,7 +5061,7 @@ msgstr "在 <0>{0}</0> 登录，然后将代码粘贴到这里。"
 
 #: src/pages/Auth.tsx
 msgid "Sign in to Rakazo"
-msgstr "登录 Rakazo"
+msgstr "登录 <0>{brandName}</0>"
 
 #: src/lib/user-error.ts
 msgid "Sign in to your existing account to link SSO"

@@ -2151,7 +2151,7 @@ msgstr "Create space"
 
 #: src/pages/Auth.tsx
 msgid "Create your Rakazo"
-msgstr "Create your Rakazo"
+msgstr "Create your <0>{brandName}</0>"
 
 #: src/components/AskCard.tsx
 msgid "Created"
@@ -5061,7 +5061,7 @@ msgstr "Sign in at <0>{0}</0>, then paste the code here."
 
 #: src/pages/Auth.tsx
 msgid "Sign in to Rakazo"
-msgstr "Sign in to Rakazo"
+msgstr "Sign in to <0>{brandName}</0>"
 
 #: src/lib/user-error.ts
 msgid "Sign in to your existing account to link SSO"

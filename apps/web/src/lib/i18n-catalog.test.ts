@@ -128,6 +128,29 @@ describe("lingui catalogs", () => {
     }
   });
 
+  it("keeps auth titles localized and substitutes the brand in English and Chinese", async () => {
+    for (const locale of ["en", "zh-CN"]) {
+      const filename = fileURLToPath(new URL(`../locales/${locale}/messages.po`, import.meta.url));
+      const catalog = await formatter().parse(readFileSync(filename, "utf8"), {
+        locale,
+        sourceLocale: "en",
+        filename,
+      });
+      for (const message of ["Sign in to Rakazo", "Create your Rakazo"]) {
+        const translated = Object.values(catalog).find(
+          (entry) => entry.message === message,
+        )?.translation;
+        expect(translated, `${locale}: ${message}`).toContain("<0>{brandName}</0>");
+        i18n.load(locale, { [message]: translated ?? "" });
+        i18n.activate(locale);
+        const title = i18n._({ id: message, message, values: { brandName: "锐捷·同舟" } });
+        expect(title, `${locale}: ${message}`).toContain("锐捷·同舟");
+        expect(title, `${locale}: ${message}`).not.toContain("{brandName}");
+        expect(title, `${locale}: ${message}`).not.toContain("Rakazo");
+      }
+    }
+  });
+
   beforeEach(() => {
     i18n.load("en", {});
     i18n.activate("en");

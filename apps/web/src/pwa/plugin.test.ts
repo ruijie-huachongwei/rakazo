@@ -47,6 +47,8 @@ describe("PWA build", () => {
     const manifest = webManifest();
     expect(manifest).toMatchObject({
       id: "/",
+      name: "锐捷·同舟",
+      short_name: "锐捷·同舟",
       scope: "/",
       start_url: "/",
       display: "standalone",

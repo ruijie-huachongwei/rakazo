@@ -17,8 +17,8 @@ export function webManifest() {
   }));
   return {
     id: "/",
-    name: "Rakazo",
-    short_name: "Rakazo",
+    name: "锐捷·同舟",
+    short_name: "锐捷·同舟",
     description: "Your team of always-on agents.",
     start_url: "/",
     scope: "/",

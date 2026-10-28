@@ -18,6 +18,7 @@ import { authErrorText, credentialIssueText } from "../lib/user-error";
 
 type AuthMode = "in" | "up" | "forgot";
 
+const brandName = "锐捷·同舟";
 const fieldClass = "mt-2 h-12 rounded-xl px-4 text-base md:text-base";
 const CODE_LENGTH = 6;
 export const submitClass = "mt-3 h-12 w-full rounded-xl text-base";
@@ -52,9 +53,13 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
     sent || codeStep ? (
       <Trans>Check your email</Trans>
     ) : mode === "in" ? (
-      <Trans>Sign in to Rakazo</Trans>
+      <Trans id="cvJXTB">
+        Sign in to <span className="inline-block whitespace-nowrap">{brandName}</span>
+      </Trans>
     ) : mode === "up" ? (
-      <Trans>Create your Rakazo</Trans>
+      <Trans id="UWIO_Q">
+        Create your <span className="inline-block whitespace-nowrap">{brandName}</span>
+      </Trans>
     ) : (
       <Trans>Reset your password</Trans>
     );
@@ -528,7 +533,10 @@ export function AuthFrame({
           <span className="h-5 w-[9px] rounded-full bg-primary" />
           <span className="h-5 w-[9px] rounded-full bg-primary" />
         </div>
-        <h1 aria-live="polite" className="mb-9 mt-7 text-4xl font-medium tracking-tight">
+        <h1
+          aria-live="polite"
+          className="mb-9 mt-7 max-w-full break-words text-center text-4xl font-medium tracking-normal"
+        >
           {title}
         </h1>
         {children}
